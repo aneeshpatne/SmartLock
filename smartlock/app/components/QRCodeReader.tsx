@@ -265,43 +265,50 @@ export default function QRCodeReader() {
         }
 
         console.log("success");
-
-        // OTP is valid — show a big success page and stop the camera.
-        // We'll comment out the real fetch for now; the network call can be
-        // re-enabled later when ready.
-        setResult(`Unlock successful!`);
+        // OTP is valid — send unlock request to local lock controller.
+        // We'll attempt a POST with a short timeout and show result/error.
         setError("");
-        setUnlocked(true);
-        stopReader();
-        setMode("idle");
+        setResult("Sending unlock request...");
 
-        /*
-        // Send to your lock controller (no timeout)
-        fetch("http://192.168.1.32/unlock", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ apiKey: "myKey", totp: scannedOtp }),
-        })
-          .then(async (response) => {
-            if (response.ok) {
-              setResult("Unlock successful!");
-              setError("");
-              stopReader();
-              setMode("idle");
-            } else {
-              const txt = await response.text().catch(() => "");
-              setError(`Unlock failed${txt ? ": " + txt : "!"}`);
-              setResult("");
-              // Continue scanning on failure
-            }
-          })
-          .catch((e: any) => {
-            console.error("Unlock request error:", e);
-            setError("Failed to send unlock request: " + e.message);
-            setResult("");
-            // Continue scanning on error
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        try {
+          const resp = await fetch("/api/unlock", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ totp: scannedOtp }),
+            signal: controller.signal,
           });
-        */
+
+          clearTimeout(timeout);
+
+          if (resp.ok) {
+            setResult("Unlock successful!");
+            setError("");
+            setUnlocked(true);
+            stopReader();
+            setMode("idle");
+          } else {
+            const txt = await resp.text().catch(() => "");
+            setError(`Unlock failed${txt ? ": " + txt : "!"}`);
+            setResult("");
+            // keep scanning active on failure
+          }
+        } catch (e: unknown) {
+          clearTimeout(timeout);
+          if ((e as DOMException)?.name === "AbortError") {
+            setError("Unlock request timed out");
+          } else {
+            console.error("Unlock request error:", e);
+            setError(
+              "Failed to send unlock request: " +
+                String((e as Error)?.message ?? e)
+            );
+          }
+          setResult("");
+          // continue scanning
+        }
 
         return;
       }
